@@ -16,8 +16,8 @@ impl ExprMap {
                 print!(" in ");
                 self.print_rec(*ex1);
             }
-            ExprKind::I32(v) => print!("{}", v),
-            ExprKind::U32(v) => print!("{}", v),
+            ExprKind::I32(v) => print!("{}i32", v),
+            ExprKind::U32(v) => print!("{}u32", v),
         }
     }
 }
