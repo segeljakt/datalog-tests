@@ -79,8 +79,8 @@ fn typecheck(exprs: ExprMap) {
         .collect::<HashSet<_>>();
 
     println!("Inputs: {{");
-    for ExprOf(e, ek) in &inputs {
-        println!("  {:?} is a {:?},", e, exprs.get(*e));
+    for x in &inputs {
+        println!("    {:?}", x);
     }
     println!("}}");
     println!();
@@ -90,8 +90,8 @@ fn typecheck(exprs: ExprMap) {
     let (outputs,) = runtime.run();
 
     println!("Outputs: {{");
-    for TypeOf(e, tk) in outputs {
-        println!("  {:?} has type {:?},", e, tk);
+    for x in outputs {
+        println!("    {:?}", x);
     }
     println!("}}");
 }
