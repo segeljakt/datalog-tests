@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 mod print;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -7,9 +5,6 @@ pub(crate) struct Name(usize);
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct Expr(usize);
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub(crate) struct Type(usize);
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub(crate) enum ExprKind {
@@ -47,7 +42,7 @@ crepe! {
 
     // Bind n0 to e0
     Bind(x0, e0) <-
-        ExprOf(e1, ek1),
+        ExprOf(_, ek1),
         let ExprKind::Let(x0, e0, _) = ek1;
 
     // It's an error if an expression has no type.
@@ -240,7 +235,6 @@ fn test4() {
 
 fn test5() {
     let mut exprs = ExprMap::default();
-    let mut names = NameMap::default();
 
     // let x = 50 in x == 150
 
