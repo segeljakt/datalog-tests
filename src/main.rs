@@ -35,17 +35,25 @@ crepe! {
     #[derive(Debug)]
     struct ExprOf(Expr, ExprKind);
 
-    @output
     struct Bind(Name, Expr);
 
     @output
     #[derive(Debug)]
     struct TypeOf(Expr, TypeKind);
 
+    @output
+    #[derive(Debug)]
+    struct TypeError(Expr);
+
     // Bind n0 to e0
     Bind(x0, e0) <-
         ExprOf(e1, ek1),
         let ExprKind::Let(x0, e0, _) = ek1;
+
+    // It's an error if an expression has no type.
+    TypeError(e0) <-
+        ExprOf(e0, _),
+        !TypeOf(e0, _);
 
     // typeof(let x = e0 in e1)
     TypeOf(e0, tk0) <-
@@ -53,33 +61,33 @@ crepe! {
         let ExprKind::Let(_, _, e1) = ek0,
         TypeOf(e1, tk0);
 
-    // Var
+    // typeof(x)
     TypeOf(e0, tk0) <-
         ExprOf(e0, ek0),
         let ExprKind::Var(x0) = ek0,
         Bind(x0, e1),
         TypeOf(e1, tk0);
 
-    // Equ
+    // typeof(a == b)
     TypeOf(e0, TypeKind::Bool) <-
         ExprOf(e0, ek0),
         let ExprKind::Equ(e1, e2) = ek0,
         TypeOf(e1, tk0),
         TypeOf(e2, tk0);
 
-    // Add
+    // typeof(a + b)
     TypeOf(e0, tk0) <-
         ExprOf(e0, ek0),
         let ExprKind::Add(e1, e2) = ek0,
         TypeOf(e1, tk0),
         TypeOf(e2, tk0);
 
-    // I32
+    // typeof(100i32)
     TypeOf(e0, TypeKind::I32) <-
         ExprOf(e0, ek0),
         let ExprKind::I32(_) = ek0;
 
-    // U32
+    // typeof(100u32)
     TypeOf(e0, TypeKind::U32) <-
         ExprOf(e0, ek0),
         let ExprKind::U32(_) = ek0;
@@ -116,53 +124,53 @@ impl NameMap {
 
 fn typecheck(exprs: ExprMap) {
     let mut runtime = Crepe::new();
-    println!("{:?}", exprs);
 
     runtime.extend(
         exprs
             .vec
             .iter()
             .enumerate()
-            .map(|(i, &e)| ExprOf(Expr(i), e))
-            .inspect(|x| println!("{:?}", x)),
+            .map(|(i, &e)| ExprOf(Expr(i), e)),
     );
 
-    let (xe, et) = runtime.run();
+    let (typings, errors) = runtime.run();
 
-    println!("{:?}", et);
-
-    println!("## Bind(..)");
-    for Bind(x, e) in xe {
-        println!("{:?} = {:?}", x, exprs.get(e));
-    }
     println!();
-    println!("## TypeOf(..)");
-    for TypeOf(e, tk) in et {
-        println!("{:?}: {:?}", exprs.get(e), tk);
+    println!("## Typings:");
+    for TypeOf(e, tk) in typings {
+        print!("  (");
+        exprs.print(e);
+        println!("): {:?}", tk);
+    }
+    println!("## Errors:");
+    for TypeError(e) in errors {
+        print!("  (");
+        exprs.print(e);
+        println!("): ???");
     }
 }
 
-fn test1() {
+fn test0() {
     let mut exprs = ExprMap::default();
     let mut names = NameMap::default();
 
-    // let x = 50 in x
+    // let x = 50i32 in x
 
     let e0 = exprs.new(ExprKind::I32(50));
     let n0 = names.new();
     let e1 = exprs.new(ExprKind::Var(n0));
     let e2 = exprs.new(ExprKind::Let(n0, e0, e1));
 
-    exprs.print(e2);
+    exprs.println(e2);
 
     typecheck(exprs);
 }
 
-fn test2() {
+fn test1() {
     let mut exprs = ExprMap::default();
     let mut names = NameMap::default();
 
-    // let x = 50 + 100 in x == 150
+    // let x = 50i32 + 100i32 in x
 
     let e0 = exprs.new(ExprKind::I32(50));
     let e1 = exprs.new(ExprKind::I32(100));
@@ -171,16 +179,16 @@ fn test2() {
     let e3 = exprs.new(ExprKind::Var(n0));
     let e4 = exprs.new(ExprKind::Let(n0, e2, e3));
 
-    exprs.print(e4);
+    exprs.println(e4);
 
     typecheck(exprs);
 }
 
-fn test3() {
+fn test2() {
     let mut exprs = ExprMap::default();
     let mut names = NameMap::default();
 
-    // let x = 50 + 100 in x == 150
+    // let x = 50i32 in x == 150i32
 
     let e0 = exprs.new(ExprKind::I32(50));
     let n0 = names.new();
@@ -189,16 +197,16 @@ fn test3() {
     let e3 = exprs.new(ExprKind::Equ(e1, e2));
     let e4 = exprs.new(ExprKind::Let(n0, e0, e3));
 
-    exprs.print(e4);
+    exprs.println(e4);
 
     typecheck(exprs);
 }
 
-fn test4() {
+fn test3() {
     let mut exprs = ExprMap::default();
     let mut names = NameMap::default();
 
-    // let x = 50 + 100 in x == 150
+    // let x = 50i32 + 100i32 in x == 150i32
 
     let e0 = exprs.new(ExprKind::I32(50));
     let e1 = exprs.new(ExprKind::I32(100));
@@ -209,7 +217,23 @@ fn test4() {
     let e5 = exprs.new(ExprKind::Equ(e3, e4));
     let e6 = exprs.new(ExprKind::Let(n0, e2, e5));
 
-    exprs.print(e6);
+    exprs.println(e6);
+
+    typecheck(exprs);
+}
+
+fn test4() {
+    let mut exprs = ExprMap::default();
+    let mut names = NameMap::default();
+
+    // let x = 50i32 in 150u32
+
+    let n0 = names.new();
+    let e0 = exprs.new(ExprKind::I32(50));
+    let e1 = exprs.new(ExprKind::U32(150));
+    let e6 = exprs.new(ExprKind::Let(n0, e0, e1));
+
+    exprs.println(e6);
 
     typecheck(exprs);
 }
@@ -218,20 +242,22 @@ fn test5() {
     let mut exprs = ExprMap::default();
     let mut names = NameMap::default();
 
-    // let x = 50 + 100 in x == 150
+    // let x = 50 in x == 150
 
-    let n0 = names.new();
     let e0 = exprs.new(ExprKind::I32(50));
     let e1 = exprs.new(ExprKind::U32(150));
-    let e6 = exprs.new(ExprKind::Let(n0, e0, e1));
+    let e2 = exprs.new(ExprKind::Equ(e0, e1));
 
-    exprs.print(e6);
+    exprs.println(e2);
 
     typecheck(exprs);
 }
 
 fn main() {
-    for (i, test) in [test3, test4, test5].iter().enumerate() {
+    for (i, test) in [test0, test1, test2, test3, test4, test5]
+        .iter()
+        .enumerate()
+    {
         println!("===============[Test {}]===============", i);
         test();
         println!();
