@@ -1,170 +1,117 @@
+mod data;
 mod print;
+mod resolve;
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub(crate) struct Name(usize);
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub(crate) struct Expr(usize);
-
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub(crate) enum ExprKind {
-    Let(Name, Expr, Expr),
-    Var(Name),
-    Tuple(Vec<Expr>),
-    Project(Expr, usize),
-    I32(i32),    // Non-linear
-    Str(String), // Linear
-}
-
-// Expression which is a Path to something
-pub(crate) type PathExpr = Expr;
+use data::*;
 
 use crepe::crepe;
 
 crepe! {
+
     @input
-    #[derive(Debug)]
-    struct ExprOf<'i>(Expr, &'i ExprKind);
+    // NameId is the direct root of PathId, e.g. Root(a, a.b)
+    struct Root(NameId, PathId);
 
-    // Checks if Expr is a PathExpr
-    struct IsPathExpr(Expr);
+    @input
+    // PathId is a direct parent of PathId, e.g. Parent(a.b, a.b.c)
+    struct Parent(PathId, PathId);
 
-    // An expression is a path-expression if it has an origin.
-    IsPathExpr(e0) <-
-        Origin(_, e0);
+    // PathId is used in ExprId, e.g. Use(a.b, <id>) where let x = <id> in e
+    @input
+    struct Used(PathId, ExprId);
 
-    // Name is the start of PathExpr, e.g. Origin(a, a.b.c)
-    @output
-    #[derive(Debug)]
-    struct Origin(Name, PathExpr);
+    // NameId is the transitive root of PathId, e.g. Origin(a, a.b.c)
+    @output // TODO: Remove
+    struct Origin(NameId, PathId);
 
-    // The origin of a path-variable is itself.
-    Origin(x, e0) <-
-        ExprOf(e0, ek0),
-        let &ExprKind::Var(x) = ek0;
+    // PathId is a transitive ancestor of PathId, e.g. Ancestor(a.b, a.b.c.d)
+    @output // TODO: Remove
+    struct Ancestor(PathId, PathId);
 
-    // The origin of a path is the origin of its ancestor.
-    Origin(x, e1) <-
-        Ancestor(e0, e1),
-        Origin(x, e0);
+    // Origin: Direct-case
+    Origin(x, p0) <-
+        Root(x, p0);
 
-    @output
-    // PathExpr is an ancestor of PathExpr
-    struct Ancestor(PathExpr, PathExpr);
+    // Origin: Transitive case
+    Origin(x, p1) <-
+        Root(x, p0),
+        Ancestor(p0, p1);
 
-    Ancestor(e0, e1) <-
-        ExprOf(e1, ek1),
-        let &ExprKind::Project(e0, _) = ek1,
-        IsPathExpr(e0);
+    // Ancestor: Direct case
+    Ancestor(p0, p1) <-
+        Parent(p0, p1);
 
-    // PathExpr is used in Expr
-    @output
-    struct Used(PathExpr, Expr);
-
-    // PathExpr is used (moved) if it occurs at the right-hand-side
-    // of a let-expression (given that it is a PathExpr).
-    Used(e0, e1) <-
-        ExprOf(e1, ek2),
-        let &ExprKind::Let(_, e0, _) = ek2,
-        IsPathExpr(e0);
-
-    // Checks if PathExpr is used
-    struct IsUsed(PathExpr);
-
-    IsUsed(e0) <- Used(e0, _);
+    // Ancestor: Transitive case
+    Ancestor(p0, p2) <-
+        Parent(p0, p1),
+        Ancestor(p1, p2);
 
     @output
-    struct Violation(PathExpr, PathExpr);
+    struct Violation(PathId, ExprId);
 
-//     Violation(e0, e1) <-
-//         Origin(x, e0),
-//         Origin(x, e1),
-//         Used(e0, _),
-//         Used(e1, _),
-//         (e0 != e1);
+    // An ancestor of a child cannot be used.
+    Violation(p0, e0) <-
+        Used(p0, e0),
+        Ancestor(p0, _);
 
-    // A ancestor-path of a child-path cannot be used.
-    Violation(e0, e1) <-
-        IsUsed(e0),
-        Ancestor(e0, e1);
+    Violation(p0, e0) <-
+        Used(p0, e0),
+        Used(p0, e1),
+        (e0 != e1);
 }
 
-#[derive(Default, Debug)]
-pub(crate) struct ExprMap {
-    pub(crate) vec: Vec<ExprKind>,
-}
+fn typecheck(exprs: ExprInterner, e: ExprId) {
 
-impl ExprMap {
-    pub(crate) fn new(&mut self, expr: ExprKind) -> Expr {
-        let id = Expr(self.vec.len());
-        self.vec.push(expr);
-        id
-    }
-    pub(crate) fn get(&self, id: Expr) -> &ExprKind {
-        self.vec.get(id.0).unwrap()
-    }
-}
+    let inline = false;
+    exprs.println(e, inline);
+    let mut paths = exprs.resolve_paths(e);
 
-#[derive(Default, Debug)]
-struct NameMap {
-    pub counter: usize,
-}
-
-impl NameMap {
-    fn new(&mut self) -> Name {
-        let id = Name(self.counter);
-        self.counter += 1;
-        id
-    }
-}
-
-fn typecheck(exprs: ExprMap) {
     let mut runtime = Crepe::new();
+    let roots = paths.roots.drain(..).map(|(x0, p0)| Root(p0, x0)).collect::<Vec<_>>();
+    let parents = paths.parents.drain(..).map(|(p0, p1)| Parent(p0, p1)).collect::<Vec<_>>();
+    let uses = paths.uses.drain(..).map(|(p0, e0)| Used(p0, e0)).collect::<Vec<_>>();
 
-    runtime.extend(
-        exprs
-            .vec
-            .iter()
-            .enumerate()
-            .map(|(i, e)| ExprOf(Expr(i), e)),
-    );
+    println!("Used:");
+    for Used(p0, p1) in uses.iter() {
+        print!("  ");
+        paths.print(p0);
+        print!(" [used in] ");
+        exprs.print(p1, true);
+        println!();
+    }
 
-    let (paths, ancestors, used, violations) = runtime.run();
+    runtime.extend(roots.into_iter());
+    runtime.extend(parents.into_iter());
+    runtime.extend(uses.into_iter());
+
+    let (origins, ancestors, violations) = runtime.run();
     let inline = true;
     println!("Origins:");
-    for Origin(x, e) in paths {
+    for Origin(x, e) in origins {
         print!("  x_{} [is origin of] ", x.0);
-        exprs.print(e, inline);
+        paths.print(e);
         println!();
     }
     println!("Ancestors:");
-    for Ancestor(e0, e1) in ancestors {
+    for Ancestor(p0, p1) in ancestors {
         print!("  ");
-        exprs.print(e0, inline);
+        paths.print(p0);
         print!(" [is ancestor of] ");
-        exprs.print(e1, inline);
-        println!();
-    }
-    println!("Used:");
-    for Used(e0, e1) in used {
-        print!("  ");
-        exprs.print(e0, inline);
-        print!(" [used in] ");
-        exprs.print(e1, inline);
+        paths.print(p1);
         println!();
     }
     println!("Violations");
-    for Violation(e0, e1) in violations {
+    for Violation(p0, e0) in violations {
         print!("  ");
-        exprs.print(e0, inline);
+        paths.print(p0);
         print!(" [] ");
-        exprs.print(e1, inline);
+        exprs.print(e0, inline);
         println!();
     }
 }
 
 fn test0() {
-    let mut exprs = ExprMap::default();
+    let mut exprs = ExprInterner::default();
     let mut names = NameMap::default();
 
     // Tests the following expr:
@@ -177,30 +124,27 @@ fn test0() {
     // -------------------------
     // Expected result: FAIL
 
-    let a = names.new();
-    let b = names.new();
-    let c = names.new();
-    let d = names.new();
+    let a = names.fresh();
+    let b = names.fresh();
+    let c = names.fresh();
+    let d = names.fresh();
 
-    let foo = exprs.new(ExprKind::Str("foo".into()));
-    let bar = exprs.new(ExprKind::Str("bar".into()));
-    let a_ref0 = exprs.new(ExprKind::Var(a));
-    let a_ref1 = exprs.new(ExprKind::Var(a));
-    let one = exprs.new(ExprKind::I32(1));
+    let foo = exprs.intern(Expr::Str("foo".into()));
+    let bar = exprs.intern(Expr::Str("bar".into()));
+    let a_ref0 = exprs.intern(Expr::Var(a));
+    let a_ref1 = exprs.intern(Expr::Var(a));
+    let one = exprs.intern(Expr::I32(1));
 
-    let let_d = exprs.new(ExprKind::Let(d, a_ref0, one));
-    let let_c = exprs.new(ExprKind::Let(c, a_ref1, let_d));
-    let let_b = exprs.new(ExprKind::Let(b, bar, let_c));
-    let let_a = exprs.new(ExprKind::Let(a, foo, let_b));
+    let let_d = exprs.intern(Expr::Let(d, a_ref0, one));
+    let let_c = exprs.intern(Expr::Let(c, a_ref1, let_d));
+    let let_b = exprs.intern(Expr::Let(b, bar, let_c));
+    let let_a = exprs.intern(Expr::Let(a, foo, let_b));
 
-    let inline = false;
-    exprs.println(let_a, inline);
-
-    typecheck(exprs);
+    typecheck(exprs, let_a);
 }
 
 fn test1() {
-    let mut exprs = ExprMap::default();
+    let mut exprs = ExprInterner::default();
     let mut names = NameMap::default();
 
     // Tests the following expr:
@@ -213,35 +157,35 @@ fn test1() {
     // -------------------------
     // Expected result: OK
 
-    let a = names.new();
-    let b = names.new();
-    let c = names.new();
-    let d = names.new();
+    let a = names.fresh();
+    let b = names.fresh();
+    let c = names.fresh();
+    let d = names.fresh();
 
-    let foo = exprs.new(ExprKind::Str("foo".into()));
-    let five = exprs.new(ExprKind::I32(5));
-    let bar = exprs.new(ExprKind::Str("bar".into()));
-    let a_ref0 = exprs.new(ExprKind::Var(a));
-    let a_ref1 = exprs.new(ExprKind::Var(a));
-    let one = exprs.new(ExprKind::I32(1));
+    let foo = exprs.intern(Expr::Str("foo".into()));
+    let five = exprs.intern(Expr::I32(5));
+    let bar = exprs.intern(Expr::Str("bar".into()));
+    let a_ref0 = exprs.intern(Expr::Var(a));
+    let a_ref1 = exprs.intern(Expr::Var(a));
+    let one = exprs.intern(Expr::I32(1));
 
-    let tuple1 = exprs.new(ExprKind::Tuple(vec![foo, five]));
-    let tuple2 = exprs.new(ExprKind::Tuple(vec![tuple1, bar]));
+    let tuple1 = exprs.intern(Expr::Tuple(vec![foo, five]));
+    let tuple2 = exprs.intern(Expr::Tuple(vec![tuple1, bar]));
 
-    let a_0_ref = exprs.new(ExprKind::Project(a_ref0, 0));
-    let a_0_0_ref = exprs.new(ExprKind::Project(a_0_ref, 0));
-    let a_0_1_ref = exprs.new(ExprKind::Project(a_0_ref, 1));
-    let a_1_ref = exprs.new(ExprKind::Project(a_ref1, 1));
+    let a_0_ref = exprs.intern(Expr::Project(a_ref0, Index(0)));
+    let a_0_0_ref = exprs.intern(Expr::Project(a_0_ref, Index(0)));
+    let a_0_1_ref = exprs.intern(Expr::Project(a_0_ref, Index(1)));
+    let a_1_ref = exprs.intern(Expr::Project(a_ref1, Index(1)));
 
-    let let_d = exprs.new(ExprKind::Let(d, a_1_ref, one));
-    let let_c = exprs.new(ExprKind::Let(c, a_0_1_ref, let_d));
-    let let_b = exprs.new(ExprKind::Let(b, a_0_0_ref, let_c));
-    let let_a = exprs.new(ExprKind::Let(a, tuple2, let_b));
+    let let_d = exprs.intern(Expr::Let(d, a_1_ref, one));
+    let let_c = exprs.intern(Expr::Let(c, a_0_1_ref, let_d));
+    let let_b = exprs.intern(Expr::Let(b, a_0_0_ref, let_c));
+    let let_a = exprs.intern(Expr::Let(a, tuple2, let_b));
 
     let inline = false;
-    exprs.println(let_a, inline);
+    exprs.println(&let_a, inline);
 
-    typecheck(exprs);
+    typecheck(exprs, let_a);
 }
 
 fn main() {
