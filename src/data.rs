@@ -1,7 +1,7 @@
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct NameId(pub(crate) usize);
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct ExprId(pub(crate) usize);
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]

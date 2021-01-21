@@ -63,7 +63,7 @@ crepe! {
     DoubleUse(p0, e0, e1) <-
         Used(p0, e0),
         Used(p0, e1),
-        (e0 != e1);
+        (e0 < e1);
 }
 
 fn typecheck(exprs: ExprInterner, e: ExprId) {
