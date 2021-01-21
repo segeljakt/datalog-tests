@@ -46,14 +46,16 @@ crepe! {
         Parent(p0, p1),
         Ancestor(p1, p2);
 
+    // Error when PathId is an Ancestor of PathId and is used in ExprId.
     @output
-    struct NaughtyAncestor(PathId, PathId, ExprId);
+    struct AncestorUsed(PathId, PathId, ExprId);
 
+    // Error when PathId is used in both ExprId and ExprId.
     @output
     struct DoubleUse(PathId, ExprId, ExprId);
 
     // An ancestor of a child cannot be used.
-    NaughtyAncestor(p0, p1, e0) <-
+    AncestorUsed(p0, p1, e0) <-
         Used(p0, e0),
         Ancestor(p0, p1);
 
@@ -99,7 +101,7 @@ fn typecheck(exprs: ExprInterner, e: ExprId) {
     runtime.extend(parents.into_iter());
     runtime.extend(uses.into_iter());
 
-    let (origins, ancestors, naughty_ancestors, double_uses) = runtime.run();
+    let (origins, ancestors, ancestor_uses, double_uses) = runtime.run();
     let inline = true;
     println!("Origins:");
     for Origin(x, e) in origins {
@@ -115,8 +117,8 @@ fn typecheck(exprs: ExprInterner, e: ExprId) {
         paths.print(p1);
         println!();
     }
-    println!("NaughtyAncestors");
-    for NaughtyAncestor(p0, p1, e0) in naughty_ancestors {
+    println!("AncestorUses");
+    for AncestorUsed(p0, p1, e0) in ancestor_uses {
         print!("  ");
         paths.print(p0);
         print!(" [is ancestor of] ");
