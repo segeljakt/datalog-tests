@@ -47,29 +47,44 @@ crepe! {
         Ancestor(p1, p2);
 
     @output
-    struct Violation(PathId, ExprId);
+    struct NaughtyAncestor(PathId, PathId, ExprId);
+
+    @output
+    struct DoubleUse(PathId, ExprId, ExprId);
 
     // An ancestor of a child cannot be used.
-    Violation(p0, e0) <-
+    NaughtyAncestor(p0, p1, e0) <-
         Used(p0, e0),
-        Ancestor(p0, _);
+        Ancestor(p0, p1);
 
-    Violation(p0, e0) <-
+    // A path cannot be used twice.
+    DoubleUse(p0, e0, e1) <-
         Used(p0, e0),
         Used(p0, e1),
         (e0 != e1);
 }
 
 fn typecheck(exprs: ExprInterner, e: ExprId) {
-
     let inline = false;
     exprs.println(e, inline);
     let mut paths = exprs.resolve_paths(e);
 
     let mut runtime = Crepe::new();
-    let roots = paths.roots.drain(..).map(|(x0, p0)| Root(p0, x0)).collect::<Vec<_>>();
-    let parents = paths.parents.drain(..).map(|(p0, p1)| Parent(p0, p1)).collect::<Vec<_>>();
-    let uses = paths.uses.drain(..).map(|(p0, e0)| Used(p0, e0)).collect::<Vec<_>>();
+    let roots = paths
+        .roots
+        .drain(..)
+        .map(|(x0, p0)| Root(p0, x0))
+        .collect::<Vec<_>>();
+    let parents = paths
+        .parents
+        .drain(..)
+        .map(|(p0, p1)| Parent(p0, p1))
+        .collect::<Vec<_>>();
+    let uses = paths
+        .uses
+        .drain(..)
+        .map(|(p0, e0)| Used(p0, e0))
+        .collect::<Vec<_>>();
 
     println!("Used:");
     for Used(p0, p1) in uses.iter() {
@@ -84,11 +99,11 @@ fn typecheck(exprs: ExprInterner, e: ExprId) {
     runtime.extend(parents.into_iter());
     runtime.extend(uses.into_iter());
 
-    let (origins, ancestors, violations) = runtime.run();
+    let (origins, ancestors, naughty_ancestors, double_uses) = runtime.run();
     let inline = true;
     println!("Origins:");
     for Origin(x, e) in origins {
-        print!("  x_{} [is origin of] ", x.0);
+        print!("  x{} [is origin of] ", x.0);
         paths.print(e);
         println!();
     }
@@ -100,12 +115,24 @@ fn typecheck(exprs: ExprInterner, e: ExprId) {
         paths.print(p1);
         println!();
     }
-    println!("Violations");
-    for Violation(p0, e0) in violations {
+    println!("NaughtyAncestors");
+    for NaughtyAncestor(p0, p1, e0) in naughty_ancestors {
         print!("  ");
         paths.print(p0);
-        print!(" [] ");
+        print!(" [is ancestor of] ");
+        paths.print(p1);
+        print!(" [and was used here] ");
         exprs.print(e0, inline);
+        println!();
+    }
+    println!("DoubleUses");
+    for DoubleUse(p0, e0, e1) in double_uses {
+        print!("  ");
+        paths.print(p0);
+        print!(" [used in] ");
+        exprs.print(e0, inline);
+        print!(" [and also] ");
+        exprs.print(e1, inline);
         println!();
     }
 }

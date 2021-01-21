@@ -12,7 +12,7 @@ impl ExprInterner {
     pub(crate) fn print(&self, id: impl Borrow<ExprId>, inline: bool) {
         match self.resolve(id.borrow()) {
             Expr::Let(nx0, ex0, ex1) => {
-                print!("let x_{} = ", nx0.0);
+                print!("let x{} = ", nx0.0);
                 self.print(ex0, inline);
                 print!(" in");
                 if inline {
@@ -22,7 +22,7 @@ impl ExprInterner {
                 }
                 self.print(ex1, inline);
             }
-            Expr::Var(nx0) => print!("x_{}", nx0.0),
+            Expr::Var(nx0) => print!("x{}", nx0.0),
             Expr::I32(v) => print!("{}i32", v),
             Expr::Tuple(es) => {
                 print!("(");
