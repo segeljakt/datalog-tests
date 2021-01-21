@@ -6,86 +6,87 @@ pub(crate) struct Name(usize);
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct Expr(usize);
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub(crate) enum ExprKind {
     Let(Name, Expr, Expr),
     Var(Name),
-    Add(Expr, Expr),
-    Equ(Expr, Expr),
-    I32(i32),
-    U32(u32),
+    Tuple(Vec<Expr>),
+    Project(Expr, usize),
+    I32(i32),    // Non-linear
+    Str(String), // Linear
 }
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub(crate) enum TypeKind {
-    I32,
-    U32,
-    Bool,
-}
+// Expression which is a Path to something
+pub(crate) type PathExpr = Expr;
 
 use crepe::crepe;
 
 crepe! {
     @input
     #[derive(Debug)]
-    struct ExprOf(Expr, ExprKind);
+    struct ExprOf<'i>(Expr, &'i ExprKind);
 
-    struct Bind(Name, Expr);
+    // Checks if Expr is a PathExpr
+    struct IsPathExpr(Expr);
 
+    // An expression is a path-expression if it has an origin.
+    IsPathExpr(e0) <-
+        Origin(_, e0);
+
+    // Name is the start of PathExpr, e.g. Origin(a, a.b.c)
     @output
     #[derive(Debug)]
-    struct TypeOf(Expr, TypeKind);
+    struct Origin(Name, PathExpr);
+
+    // The origin of a path-variable is itself.
+    Origin(x, e0) <-
+        ExprOf(e0, ek0),
+        let &ExprKind::Var(x) = ek0;
+
+    // The origin of a path is the origin of its ancestor.
+    Origin(x, e1) <-
+        Ancestor(e0, e1),
+        Origin(x, e0);
 
     @output
-    #[derive(Debug)]
-    struct TypeError(Expr);
+    // PathExpr is an ancestor of PathExpr
+    struct Ancestor(PathExpr, PathExpr);
 
-    // Bind n0 to e0
-    Bind(x0, e0) <-
-        ExprOf(_, ek1),
-        let ExprKind::Let(x0, e0, _) = ek1;
+    Ancestor(e0, e1) <-
+        ExprOf(e1, ek1),
+        let &ExprKind::Project(e0, _) = ek1,
+        IsPathExpr(e0);
 
-    // It's an error if an expression has no type.
-    TypeError(e0) <-
-        ExprOf(e0, _),
-        !TypeOf(e0, _);
+    // PathExpr is used in Expr
+    @output
+    struct Used(PathExpr, Expr);
 
-    // typeof(let x = e0 in e1)
-    TypeOf(e0, tk0) <-
-        ExprOf(e0, ek0),
-        let ExprKind::Let(_, _, e1) = ek0,
-        TypeOf(e1, tk0);
+    // PathExpr is used (moved) if it occurs at the right-hand-side
+    // of a let-expression (given that it is a PathExpr).
+    Used(e0, e1) <-
+        ExprOf(e1, ek2),
+        let &ExprKind::Let(_, e0, _) = ek2,
+        IsPathExpr(e0);
 
-    // typeof(x)
-    TypeOf(e0, tk0) <-
-        ExprOf(e0, ek0),
-        let ExprKind::Var(x0) = ek0,
-        Bind(x0, e1),
-        TypeOf(e1, tk0);
+    // Checks if PathExpr is used
+    struct IsUsed(PathExpr);
 
-    // typeof(a == b)
-    TypeOf(e0, TypeKind::Bool) <-
-        ExprOf(e0, ek0),
-        let ExprKind::Equ(e1, e2) = ek0,
-        TypeOf(e1, tk0),
-        TypeOf(e2, tk0);
+    IsUsed(e0) <- Used(e0, _);
 
-    // typeof(a + b)
-    TypeOf(e0, tk0) <-
-        ExprOf(e0, ek0),
-        let ExprKind::Add(e1, e2) = ek0,
-        TypeOf(e1, tk0),
-        TypeOf(e2, tk0);
+    @output
+    struct Violation(PathExpr, PathExpr);
 
-    // typeof(100i32)
-    TypeOf(e0, TypeKind::I32) <-
-        ExprOf(e0, ek0),
-        let ExprKind::I32(_) = ek0;
+//     Violation(e0, e1) <-
+//         Origin(x, e0),
+//         Origin(x, e1),
+//         Used(e0, _),
+//         Used(e1, _),
+//         (e0 != e1);
 
-    // typeof(100u32)
-    TypeOf(e0, TypeKind::U32) <-
-        ExprOf(e0, ek0),
-        let ExprKind::U32(_) = ek0;
+    // A ancestor-path of a child-path cannot be used.
+    Violation(e0, e1) <-
+        IsUsed(e0),
+        Ancestor(e0, e1);
 }
 
 #[derive(Default, Debug)]
@@ -125,23 +126,40 @@ fn typecheck(exprs: ExprMap) {
             .vec
             .iter()
             .enumerate()
-            .map(|(i, &e)| ExprOf(Expr(i), e)),
+            .map(|(i, e)| ExprOf(Expr(i), e)),
     );
 
-    let (typings, errors) = runtime.run();
-
-    println!();
-    println!("## Typings:");
-    for TypeOf(e, tk) in typings {
-        print!("  (");
-        exprs.print(e);
-        println!("): {:?}", tk);
+    let (paths, ancestors, used, violations) = runtime.run();
+    let inline = true;
+    println!("Origins:");
+    for Origin(x, e) in paths {
+        print!("  x_{} [is origin of] ", x.0);
+        exprs.print(e, inline);
+        println!();
     }
-    println!("## Errors:");
-    for TypeError(e) in errors {
-        print!("  (");
-        exprs.print(e);
-        println!("): ???");
+    println!("Ancestors:");
+    for Ancestor(e0, e1) in ancestors {
+        print!("  ");
+        exprs.print(e0, inline);
+        print!(" [is ancestor of] ");
+        exprs.print(e1, inline);
+        println!();
+    }
+    println!("Used:");
+    for Used(e0, e1) in used {
+        print!("  ");
+        exprs.print(e0, inline);
+        print!(" [used in] ");
+        exprs.print(e1, inline);
+        println!();
+    }
+    println!("Violations");
+    for Violation(e0, e1) in violations {
+        print!("  ");
+        exprs.print(e0, inline);
+        print!(" [] ");
+        exprs.print(e1, inline);
+        println!();
     }
 }
 
@@ -149,14 +167,34 @@ fn test0() {
     let mut exprs = ExprMap::default();
     let mut names = NameMap::default();
 
-    // let x = 50i32 in x
+    // Tests the following expr:
+    // -------------------------
+    // let a = "foo" in  // {x}
+    // let b = "bar" in  // {x, y}
+    // let c = a in      // {c, b}
+    // let d = a in      // error, a ∉ {c, b}
+    // 1
+    // -------------------------
+    // Expected result: FAIL
 
-    let e0 = exprs.new(ExprKind::I32(50));
-    let n0 = names.new();
-    let e1 = exprs.new(ExprKind::Var(n0));
-    let e2 = exprs.new(ExprKind::Let(n0, e0, e1));
+    let a = names.new();
+    let b = names.new();
+    let c = names.new();
+    let d = names.new();
 
-    exprs.println(e2);
+    let foo = exprs.new(ExprKind::Str("foo".into()));
+    let bar = exprs.new(ExprKind::Str("bar".into()));
+    let a_ref0 = exprs.new(ExprKind::Var(a));
+    let a_ref1 = exprs.new(ExprKind::Var(a));
+    let one = exprs.new(ExprKind::I32(1));
+
+    let let_d = exprs.new(ExprKind::Let(d, a_ref0, one));
+    let let_c = exprs.new(ExprKind::Let(c, a_ref1, let_d));
+    let let_b = exprs.new(ExprKind::Let(b, bar, let_c));
+    let let_a = exprs.new(ExprKind::Let(a, foo, let_b));
+
+    let inline = false;
+    exprs.println(let_a, inline);
 
     typecheck(exprs);
 }
@@ -165,93 +203,49 @@ fn test1() {
     let mut exprs = ExprMap::default();
     let mut names = NameMap::default();
 
-    // let x = 50i32 + 100i32 in x
+    // Tests the following expr:
+    // -------------------------
+    // let a = (("foo", 5), "bar") in
+    // let b = a.0.0 in
+    // let c = a.0.1 in
+    // let d = a.1 in
+    // 1
+    // -------------------------
+    // Expected result: OK
 
-    let e0 = exprs.new(ExprKind::I32(50));
-    let e1 = exprs.new(ExprKind::I32(100));
-    let e2 = exprs.new(ExprKind::Add(e0, e1));
-    let n0 = names.new();
-    let e3 = exprs.new(ExprKind::Var(n0));
-    let e4 = exprs.new(ExprKind::Let(n0, e2, e3));
+    let a = names.new();
+    let b = names.new();
+    let c = names.new();
+    let d = names.new();
 
-    exprs.println(e4);
+    let foo = exprs.new(ExprKind::Str("foo".into()));
+    let five = exprs.new(ExprKind::I32(5));
+    let bar = exprs.new(ExprKind::Str("bar".into()));
+    let a_ref0 = exprs.new(ExprKind::Var(a));
+    let a_ref1 = exprs.new(ExprKind::Var(a));
+    let one = exprs.new(ExprKind::I32(1));
 
-    typecheck(exprs);
-}
+    let tuple1 = exprs.new(ExprKind::Tuple(vec![foo, five]));
+    let tuple2 = exprs.new(ExprKind::Tuple(vec![tuple1, bar]));
 
-fn test2() {
-    let mut exprs = ExprMap::default();
-    let mut names = NameMap::default();
+    let a_0_ref = exprs.new(ExprKind::Project(a_ref0, 0));
+    let a_0_0_ref = exprs.new(ExprKind::Project(a_0_ref, 0));
+    let a_0_1_ref = exprs.new(ExprKind::Project(a_0_ref, 1));
+    let a_1_ref = exprs.new(ExprKind::Project(a_ref1, 1));
 
-    // let x = 50i32 in x == 150i32
+    let let_d = exprs.new(ExprKind::Let(d, a_1_ref, one));
+    let let_c = exprs.new(ExprKind::Let(c, a_0_1_ref, let_d));
+    let let_b = exprs.new(ExprKind::Let(b, a_0_0_ref, let_c));
+    let let_a = exprs.new(ExprKind::Let(a, tuple2, let_b));
 
-    let e0 = exprs.new(ExprKind::I32(50));
-    let n0 = names.new();
-    let e1 = exprs.new(ExprKind::I32(150));
-    let e2 = exprs.new(ExprKind::Var(n0));
-    let e3 = exprs.new(ExprKind::Equ(e1, e2));
-    let e4 = exprs.new(ExprKind::Let(n0, e0, e3));
-
-    exprs.println(e4);
-
-    typecheck(exprs);
-}
-
-fn test3() {
-    let mut exprs = ExprMap::default();
-    let mut names = NameMap::default();
-
-    // let x = 50i32 + 100i32 in x == 150i32
-
-    let e0 = exprs.new(ExprKind::I32(50));
-    let e1 = exprs.new(ExprKind::I32(100));
-    let e2 = exprs.new(ExprKind::Add(e0, e1));
-    let n0 = names.new();
-    let e3 = exprs.new(ExprKind::I32(150));
-    let e4 = exprs.new(ExprKind::Var(n0));
-    let e5 = exprs.new(ExprKind::Equ(e3, e4));
-    let e6 = exprs.new(ExprKind::Let(n0, e2, e5));
-
-    exprs.println(e6);
-
-    typecheck(exprs);
-}
-
-fn test4() {
-    let mut exprs = ExprMap::default();
-    let mut names = NameMap::default();
-
-    // let x = 50i32 in 150u32
-
-    let n0 = names.new();
-    let e0 = exprs.new(ExprKind::I32(50));
-    let e1 = exprs.new(ExprKind::U32(150));
-    let e6 = exprs.new(ExprKind::Let(n0, e0, e1));
-
-    exprs.println(e6);
-
-    typecheck(exprs);
-}
-
-fn test5() {
-    let mut exprs = ExprMap::default();
-
-    // let x = 50 in x == 150
-
-    let e0 = exprs.new(ExprKind::I32(50));
-    let e1 = exprs.new(ExprKind::U32(150));
-    let e2 = exprs.new(ExprKind::Equ(e0, e1));
-
-    exprs.println(e2);
+    let inline = false;
+    exprs.println(let_a, inline);
 
     typecheck(exprs);
 }
 
 fn main() {
-    for (i, test) in [test0, test1, test2, test3, test4, test5]
-        .iter()
-        .enumerate()
-    {
+    for (i, test) in [test0, test1].iter().enumerate() {
         println!("===============[Test {}]===============", i);
         test();
         println!();
