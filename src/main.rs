@@ -48,19 +48,19 @@ crepe! {
 
     // Error when PathId is an Ancestor of PathId and is used in ExprId.
     @output
-    struct AncestorUsed(PathId, PathId, ExprId);
+    struct MovedValueUsage(PathId, PathId, ExprId);
 
     // Error when PathId is used in both ExprId and ExprId.
     @output
-    struct DoubleUse(PathId, ExprId, ExprId);
+    struct DoubleUsage(PathId, ExprId, ExprId);
 
     // An ancestor of a child cannot be used.
-    AncestorUsed(p0, p1, e0) <-
+    MovedValueUsage(p0, p1, e0) <-
         Used(p0, e0),
         Ancestor(p0, p1);
 
     // A path cannot be used twice.
-    DoubleUse(p0, e0, e1) <-
+    DoubleUsage(p0, e0, e1) <-
         Used(p0, e0),
         Used(p0, e1),
         (e0 != e1);
@@ -101,7 +101,7 @@ fn typecheck(exprs: ExprInterner, e: ExprId) {
     runtime.extend(parents.into_iter());
     runtime.extend(uses.into_iter());
 
-    let (origins, ancestors, ancestor_uses, double_uses) = runtime.run();
+    let (origins, ancestors, moved_value_uses, double_uses) = runtime.run();
     let inline = true;
     println!("Origins:");
     for Origin(x, e) in origins {
@@ -117,8 +117,8 @@ fn typecheck(exprs: ExprInterner, e: ExprId) {
         paths.print(p1);
         println!();
     }
-    println!("AncestorUses");
-    for AncestorUsed(p0, p1, e0) in ancestor_uses {
+    println!("MovedValueUses");
+    for MovedValueUsage(p0, p1, e0) in moved_value_uses {
         print!("  ");
         paths.print(p0);
         print!(" [is ancestor of] ");
@@ -128,7 +128,7 @@ fn typecheck(exprs: ExprInterner, e: ExprId) {
         println!();
     }
     println!("DoubleUses");
-    for DoubleUse(p0, e0, e1) in double_uses {
+    for DoubleUsage(p0, e0, e1) in double_uses {
         print!("  ");
         paths.print(p0);
         print!(" [used in] ");
