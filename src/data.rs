@@ -31,11 +31,11 @@ impl ExprInterner {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct NameMap {
+pub(crate) struct NameInterner {
     pub counter: usize,
 }
 
-impl NameMap {
+impl NameInterner {
     pub(crate) fn fresh(&mut self) -> NameId {
         let id = NameId(self.counter);
         self.counter += 1;

@@ -141,7 +141,7 @@ fn typecheck(exprs: ExprInterner, e: ExprId) {
 
 fn test0() {
     let mut exprs = ExprInterner::default();
-    let mut names = NameMap::default();
+    let mut names = NameInterner::default();
 
     // Tests the following expr:
     // -------------------------
@@ -174,7 +174,7 @@ fn test0() {
 
 fn test1() {
     let mut exprs = ExprInterner::default();
-    let mut names = NameMap::default();
+    let mut names = NameInterner::default();
 
     // Tests the following expr:
     // -------------------------
@@ -217,8 +217,55 @@ fn test1() {
     typecheck(exprs, let_a);
 }
 
+fn test2() {
+    let mut exprs = ExprInterner::default();
+    let mut names = NameInterner::default();
+    // Test out typed Python
+    // Arcon SQL - Python?
+
+    // Tests the following expr:
+    // -------------------------
+    // let a = (("foo", 5), "bar") in
+    // let b = a.0.0 in
+    // let c = a.0.1 in
+    // let d = a.0 in
+    // 1
+    // -------------------------
+    // Expected result: ERROR
+
+    let a = names.fresh();
+    let b = names.fresh();
+    let c = names.fresh();
+    let d = names.fresh();
+
+    let foo = exprs.intern(Expr::Str("foo".into()));
+    let five = exprs.intern(Expr::I32(5));
+    let bar = exprs.intern(Expr::Str("bar".into()));
+    let a_ref0 = exprs.intern(Expr::Var(a));
+    let a_ref1 = exprs.intern(Expr::Var(a));
+    let one = exprs.intern(Expr::I32(1));
+
+    let tuple1 = exprs.intern(Expr::Tuple(vec![foo, five]));
+    let tuple2 = exprs.intern(Expr::Tuple(vec![tuple1, bar]));
+
+    let a_0_ref = exprs.intern(Expr::Project(a_ref0, Index(0)));
+    let a_0_0_ref = exprs.intern(Expr::Project(a_0_ref, Index(0)));
+    let a_0_1_ref = exprs.intern(Expr::Project(a_0_ref, Index(1)));
+    let a_1_ref = exprs.intern(Expr::Project(a_ref1, Index(0)));
+
+    let let_d = exprs.intern(Expr::Let(d, a_1_ref, one));
+    let let_c = exprs.intern(Expr::Let(c, a_0_1_ref, let_d));
+    let let_b = exprs.intern(Expr::Let(b, a_0_0_ref, let_c));
+    let let_a = exprs.intern(Expr::Let(a, tuple2, let_b));
+
+    let inline = false;
+    exprs.println(&let_a, inline);
+
+    typecheck(exprs, let_a);
+}
+
 fn main() {
-    for (i, test) in [test0, test1].iter().enumerate() {
+    for (i, test) in [test0, test1, test2].iter().enumerate() {
         println!("===============[Test {}]===============", i);
         test();
         println!();
